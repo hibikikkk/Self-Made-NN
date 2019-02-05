@@ -1,66 +1,11 @@
 import numpy as np
 
-
-class ActivationMethods:
-
-    @staticmethod
-    def step(x):
-        if 0 >= x:
-            return 0
-        return 1
-
-    class Relu:
-        def __init__(self):
-            self.mask = None
-
-        def forward(self, x):
-            self.mask = (x <= 0)
-            out = x.copy()
-            print(out)
-            out[self.mask] = 0
-            return out
-
-        def backward(self, dout):
-            dout[self.mask] = 0
-            dx = dout
-            return dx
-
-    class Sigmoid:
-
-        def __init__(self):
-            self.out = None
-
-        def forward(self, x):
-            out = 1 / (1 + np.exp(-x))
-            self.out = out
-
-            return out
-
-        def backward(self, dout):
-            dx = dout * (1.0 - self.out) * self.out
-            return dx
-
-    @staticmethod
-    def softmax(x):
-        exp_x = np.exp(x)
-        return exp_x / np.sum(np.exp(x))
-
-
-class LossFunctions:
-
-    @staticmethod
-    def cross_entropy_error(y, label):
-        dlt = 1e-8
-        return -np.sum(label * np.log(y + dlt))
-
-    @staticmethod
-    def mean_squared_error(y, label):
-        return np.sum((label - y) ** 2) / 2
+from functions import ActivationMethods
 
 
 class NeuralNetwork:
 
-    def __init__(self, input_size, output_size, bias=None, weight=None, act_func=None, output_func=None,
+    def __init__(self, input_size, node, bias=None, weight=None, act_func=None, output_func=None,
                  loss_func=None):
         """
         input_size:int 入力の数
@@ -69,11 +14,11 @@ class NeuralNetwork:
         act_func:method or str 活性化関数の設定。設定がない場合活性化関数を使用しない
         """
         self.input_size = input_size
-        self.output_size = output_size
+        self.node = node
         if weight:
             self.weight = weight
         else:
-            self.weight = np.random.normal(loc=0, scale=0.1, size=(input_size, output_size))
+            self.weight = np.random.normal(loc=0, scale=0.1, size=(input_size, node))
         if bias:
             self.bias = bias
         else:
@@ -83,7 +28,7 @@ class NeuralNetwork:
         self.output_func = output_func
         self.loss_func = loss_func
 
-    def forward(self, x):
+    def forward(self, x, t=None):
         """
         前向き推論
         :param x:numpy.array 入力
@@ -93,16 +38,20 @@ class NeuralNetwork:
             if type(self.act_func) == "str":
                 pass
             else:
-                return np.array(list(map(self.act_func.forward, (np.dot(x, self.weight) + self.bias))))
+                # return np.array(list(map(self.act_func.forward, (np.dot(x, self.weight) + self.bias))))
+                return self.act_func.forward((np.dot(x, self.weight) + self.bias))
 
         elif self.output_func:
-            return self.output_func((np.dot(x, self.weight) + self.bias))
+            return self.output_func.forward((np.dot(x, self.weight) + self.bias), t)
 
         else:
             return np.dot(x, self.weight) + self.bias
 
     def backward(self, dx):
-        pass
+        if self.act_func:
+            return self.act_func.backward(dx)
+        if self.output_func:
+            return self.output_func.backward(dx)
 
     def gradient_descent(self, f, init_x, lr=0.01, step_num=100):
         x = init_x
@@ -150,7 +99,17 @@ class Layer:
         """
         self.input = None
         self.hidden_layer = []
+        self.layer_info = None
         self.output = None
+
+    def get_layer_info(self):
+        if self.hidden_layer:
+            self.layer_info = {"layer_num": len(self.hidden_layer) - 1,
+                               "node_info": [{"function": a["activation"].__class__.__name__ if a["activation"] else a[
+                                   "output_func"].__class__.__name__ if a["output_func"] else "Identity",
+                                              "node_num": a["node"]} for a in self.hidden_layer]}
+
+        return self.layer_info
 
     def add(self, **kwargs):
         """隠れ層を追加するメソッド
@@ -161,15 +120,11 @@ class Layer:
         :param output_func:ActivationMethod 出力関数関数の設定
         :return:None
         """
-        hidden_out = None
         hidden_act = None
         output_func = None
         for key in kwargs:
             if key == "node":
                 hidden_node = kwargs[key]
-
-            if key == "output_num":
-                hidden_out = kwargs[key]
 
             if key == "activation":
                 hidden_act = kwargs[key]
@@ -177,45 +132,77 @@ class Layer:
             if key == "output_func":
                 output_func = kwargs[key]
 
-        if self.hidden_layer:
-            self.hidden_layer[len(self.hidden_layer) - 1]["out"] = hidden_node
-            self.hidden_layer.append(
-                {"node": hidden_node, "out": hidden_out, "activation": hidden_act, "output_func": output_func,
-                 "net": None})
-        else:
-            self.hidden_layer.append(
-                {"node": hidden_node, "out": hidden_out, "activation": hidden_act, "output_func": output_func,
-                 "net": None})
+        self.hidden_layer.append(
+            {"node": hidden_node, "activation": hidden_act, "output_func": output_func,
+             "net": None})
 
     def predict(self, x):
+        """予測メソッド
+
+        :param x:numpy.ndarray 入力値
+        :return:numpy.ndarray 予測結果
+        """
         for i, val in enumerate(self.hidden_layer):
             if not self.hidden_layer[i]["net"]:
-                self.hidden_layer[i]["net"] = NeuralNetwork(input_size=val["node"], output_size=val["out"],
-                                                            act_func=val["activation"], output_func=val["output_func"])
+                self.hidden_layer[i]["net"] = NeuralNetwork(input_size=x.shape[0],
+                                                            node=val["node"], act_func=val["activation"],
+                                                            output_func=val["output_func"])
+
             y = self.hidden_layer[i]["net"].forward(x)
 
         return y
 
-    def fit(self, x):
-        y = self.predict(x)
+    def fit(self, x, t):
+        y = self.predict(x, t)
+        self.hidden_layer.reverse()
         for i, val in enumerate(self.hidden_layer):
-            self.hidden_layer[i]["net"]
+            self.hidden_layer[i]["net"].backward(1)
+        self.hidden_layer.reverse()
+
+
+def random_layer_set(layer: Layer):
+    for _ in range(np.random.randint(100)):
+        num = np.random.randint(1, 10)
+        if num % 2 == 0:
+            layer.add(node=num, activation=ActivationMethods.Sigmoid())
+        elif num % 3 == 0:
+            layer.add(node=num, activation=None)
+        else:
+            layer.add(node=num, activation=ActivationMethods.Relu())
+    return layer
 
 
 if __name__ == "__main__":
-    x = np.array([1, 1, 1, 0, 1, 0])
+    # ファイルからデータセットの呼び出し
+    import pandas as pd
+
+    csv = pd.read_csv("data-set.csv")
+    X = [csv["X1"], csv["X2"], csv["X3"], csv["X4"]]
+    T = [csv["T1"], csv["T2"], csv["T3"], csv["T4"]]
+
+    # print(np.array(X))
+    # print(np.array(T))
+    x = np.array([1, 1])
+    t = np.array([1, 0])
+
     layer = Layer()
-    layer.add(node=6, activation=ActivationMethods.Sigmoid())
-    layer.add(node=6, activation=ActivationMethods.Relu())
-    layer.add(node=6, activation=ActivationMethods.Sigmoid())
-    layer.add(node=6, activation=ActivationMethods.Relu())
-    layer.add(node=6, activation=ActivationMethods.Sigmoid())
-    layer.add(node=6, output_num=2, output_func=ActivationMethods.softmax)
+
+    # 隠れ層の追加
+    layer.add(node=6, acttivation=ActivationMethods.Sigmoid())
+    layer.add(node=6, acttivation=ActivationMethods.Relu())
+    layer.add(node=6, acttivation=ActivationMethods.Sigmoid())
+    layer.add(node=6, acttivation=ActivationMethods.Relu())
+
+    # 最終層
+    layer.add(node=2, output_func=ActivationMethods.SoftmaxWithLoss())
     y = layer.predict(x)
     print(y)
-    # print(layer.hidden_layer)
-    correct_count = 0
-    counter = 0
+    import pprint
+
+    # pprint.pprint(layer.hidden_layer)
+    pprint.pprint(layer.get_layer_info())
+    layer.fit(x, t)
+
     # for _ in range(100):
     #     x = np.array([1, 1, 1, 0, 1, 0])
     #     x = layer1.forward(x)
