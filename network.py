@@ -5,8 +5,7 @@ from functions import ActivationMethods
 
 class NeuralNetwork:
 
-    def __init__(self, input_size, node, bias=None, weight=None, act_func=None, output_func=None,
-                 loss_func=None):
+    def __init__(self, input_size, node, bias=None, weight=None, act_func=None, output_func=None):
         """
         input_size:int 入力の数
         node:int ニューロン数
@@ -22,11 +21,11 @@ class NeuralNetwork:
         if bias:
             self.bias = bias
         else:
-            self.bias = np.random.normal(loc=0, scale=0.5, size=1)
+            self.bias = np.random.normal(loc=0, scale=0.5, size=node)
 
         self.act_func = act_func
+        self.affine = ActivationMethods.Affine(self.weight, self.bias)
         self.output_func = output_func
-        self.loss_func = loss_func
 
     def forward(self, x, t=None):
         """
@@ -38,20 +37,19 @@ class NeuralNetwork:
             if type(self.act_func) == "str":
                 pass
             else:
-                # return np.array(list(map(self.act_func.forward, (np.dot(x, self.weight) + self.bias))))
-                return self.act_func.forward((np.dot(x, self.weight) + self.bias))
+                return self.act_func.forward(self.affine.forward(x))
 
         elif self.output_func:
-            return self.output_func.forward((np.dot(x, self.weight) + self.bias), t)
+            return self.output_func.forward(self.affine.forward(x), t)
 
         else:
-            return np.dot(x, self.weight) + self.bias
+            return self.affine.forward(x)
 
     def backward(self, dx):
         if self.act_func:
-            return self.act_func.backward(dx)
+            return self.affine.backward(self.act_func.backward(dx))
         if self.output_func:
-            return self.output_func.backward(dx)
+            return self.affine.backward(self.output_func.backward(dx))
 
     def gradient_descent(self, f, init_x, lr=0.01, step_num=100):
         x = init_x
@@ -136,7 +134,7 @@ class Layer:
             {"node": hidden_node, "activation": hidden_act, "output_func": output_func,
              "net": None})
 
-    def predict(self, x):
+    def predict(self, x, t=None):
         """予測メソッド
 
         :param x:numpy.ndarray 入力値
@@ -144,20 +142,29 @@ class Layer:
         """
         for i, val in enumerate(self.hidden_layer):
             if not self.hidden_layer[i]["net"]:
-                self.hidden_layer[i]["net"] = NeuralNetwork(input_size=x.shape[0],
+                self.hidden_layer[i]["net"] = NeuralNetwork(input_size=x.shape[1] or 0,
                                                             node=val["node"], act_func=val["activation"],
                                                             output_func=val["output_func"])
 
-            y = self.hidden_layer[i]["net"].forward(x)
+            if t is not None and len(self.hidden_layer) - 1 == i:
+                x = self.hidden_layer[i]["net"].forward(x, t)
+            else:
+                x = self.hidden_layer[i]["net"].forward(x)
 
-        return y
+        return x
 
-    def fit(self, x, t):
-        y = self.predict(x, t)
-        self.hidden_layer.reverse()
-        for i, val in enumerate(self.hidden_layer):
-            self.hidden_layer[i]["net"].backward(1)
-        self.hidden_layer.reverse()
+    def fit(self, x, t, epoch_num=10, learning_rate=0.01):
+        for _ in range(epoch_num):
+            result = self.predict(x, t)
+            print(result)
+
+            dout = 1
+            self.hidden_layer.reverse()
+            for i, val in enumerate(self.hidden_layer):
+                dout = self.hidden_layer[i]["net"].backward(dout)
+                self.hidden_layer[i]["net"].weight -= learning_rate * self.hidden_layer[i]["net"].affine.dW
+                self.hidden_layer[i]["net"].bias -= learning_rate * self.hidden_layer[i]["net"].affine.db
+            self.hidden_layer.reverse()
 
 
 def random_layer_set(layer: Layer):
@@ -177,31 +184,32 @@ if __name__ == "__main__":
     import pandas as pd
 
     csv = pd.read_csv("data-set.csv")
-    X = [csv["X1"], csv["X2"], csv["X3"], csv["X4"]]
+    X = [[[csv["X1"][0]], [csv["X1"][1]]], [[csv["X2"][0]], [csv["X2"][1]]], [[csv["X3"][0]], [csv["X3"][1]]],
+         [[csv["X4"][0]], [csv["X4"][1]]]]
     T = [csv["T1"], csv["T2"], csv["T3"], csv["T4"]]
 
     # print(np.array(X))
     # print(np.array(T))
-    x = np.array([1, 1])
-    t = np.array([1, 0])
+    # x = np.array([[1], [1]])
+    # t = np.array([1, 0])
+    x = np.array(X)
+    t = np.array(T)
 
     layer = Layer()
 
     # 隠れ層の追加
-    layer.add(node=6, acttivation=ActivationMethods.Sigmoid())
-    layer.add(node=6, acttivation=ActivationMethods.Relu())
-    layer.add(node=6, acttivation=ActivationMethods.Sigmoid())
-    layer.add(node=6, acttivation=ActivationMethods.Relu())
+    layer.add(node=6, activation=ActivationMethods.Sigmoid())
+    layer.add(node=6, activation=ActivationMethods.Relu())
+    layer.add(node=6, activation=ActivationMethods.Sigmoid())
+    layer.add(node=6, activation=ActivationMethods.Relu())
 
     # 最終層
     layer.add(node=2, output_func=ActivationMethods.SoftmaxWithLoss())
-    y = layer.predict(x)
-    print(y)
-    import pprint
-
-    # pprint.pprint(layer.hidden_layer)
-    pprint.pprint(layer.get_layer_info())
-    layer.fit(x, t)
+    layer.fit(x, t, epoch_num=100, learning_rate=0.01)
+    # import pprint
+    #
+    # # pprint.pprint(layer.hidden_layer)
+    # pprint.pprint(layer.get_layer_info())
 
     # for _ in range(100):
     #     x = np.array([1, 1, 1, 0, 1, 0])

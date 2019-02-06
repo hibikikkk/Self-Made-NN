@@ -65,8 +65,7 @@ class ActivationMethods:
         def forward(self, x):
             # テンソル対応
             self.original_x_shape = x.shape
-            x = x.reshape(x.shape[0], -1)
-            self.x = x
+            self.x = x.reshape(x.shape[0], -1)
 
             out = np.dot(self.x, self.W) + self.b
 
@@ -90,9 +89,12 @@ class ActivationMethods:
         def forward(self, x, t=None, loss=LossFunctions.cross_entropy_error):
             self.t = t
             self.y = self.softmax(x)
-            if t:
+            if t is not None:
+                print(np.where(self.y.argmax() == np.argmax(self.t)))
+                print(self.y)
+                print(self.t)
                 self.loss = loss(self.y, self.t)
-                return loss
+                return self.loss
             else:
                 return self.y
 
